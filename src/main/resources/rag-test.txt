@@ -1,0 +1,4 @@
+Java是一种面向对象的编程语言，由Sun公司开发。
+Spring Boot是一个用于简化Spring开发的框架。
+RAG是一种结合检索和生成的AI技术。
+向量数据库用于存储文本的embedding表示。

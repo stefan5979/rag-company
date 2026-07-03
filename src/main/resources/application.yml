@@ -1,0 +1,9 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-demo
+
+dashscope:
+  api-key: sk-ws-H.REXXHDM.tzLx.MEYCIQDXlLM05wpoSGquGsRxOwT9TY1URqx_NDejclM9MmSI1gIhAIyZOc_PEvAh5Ds1yhUJK9zNttZsvQp4DJVvCqOAg0v8
