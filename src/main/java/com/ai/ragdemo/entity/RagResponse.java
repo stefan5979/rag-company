@@ -6,5 +6,5 @@ import java.util.List;
 @Data
 public class RagResponse {
     private String answer;
-    private List<String> sources;
+    private List<SourceDocument> sources;
 }

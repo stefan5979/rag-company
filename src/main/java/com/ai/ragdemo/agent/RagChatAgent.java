@@ -1,11 +1,14 @@
 package com.ai.ragdemo.agent;
 
 import com.ai.ragdemo.entity.RagResponse;
+import com.ai.ragdemo.entity.SourceDocument;
 import com.ai.ragdemo.service.RagService;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.rag.content.retriever.ContentRetriever;
-import dev.langchain4j.service.AiServices;
-import dev.langchain4j.service.SystemMessage;
+import dev.langchain4j.model.embedding.EmbeddingModel;
+import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -13,40 +16,99 @@ import java.util.List;
 @Component
 public class RagChatAgent {
 
-    private final RagAssistant assistant;
+    private final ChatLanguageModel chatModel;
+    private final EmbeddingModel embeddingModel;
+    private final EmbeddingStore<TextSegment> store;
 
-    public RagChatAgent(ChatLanguageModel chatLanguageModel,
+    public RagChatAgent(ChatLanguageModel chatModel,
+                        EmbeddingModel embeddingModel,
                         RagService ragService) {
 
-        // 1. 获取 retriever（可以先不用担心初始化时机）
-        ContentRetriever retriever = ragService.getRetriever();
-
-        // 2. 直接用 AiServices（先不引入 DefaultRetrievalAugmentor，避免版本坑）
-        this.assistant = AiServices.builder(RagAssistant.class)
-                .chatLanguageModel(chatLanguageModel)
-                .contentRetriever(retriever)   // ⭐关键：RAG核心就在这里
-                .build();
-    }
-
-    interface RagAssistant {
-
-        @SystemMessage("""
-            你是一个严谨的知识助手。
-            只能根据提供的知识库内容回答问题。
-            如果知识库没有相关信息，请回答：暂无相关信息。
-            不允许编造。
-        """)
-        String chat(String message);
+        this.chatModel = chatModel;
+        this.embeddingModel = embeddingModel;
+        this.store = ragService.getStore();
     }
 
     public RagResponse ask(String question) {
 
-        String answer = assistant.chat(question);
+        // 1️⃣ 向量化
+        Embedding queryEmbedding = embeddingModel.embed(question).content();
 
-        RagResponse response = new RagResponse();
-        response.setAnswer(answer);
-        response.setSources(List.of("rag-test.txt"));
+        // 2️⃣ 检索
+        List<EmbeddingMatch<TextSegment>> matches =
+                store.findRelevant(queryEmbedding, 5);
 
-        return response;
+        // 3️⃣ 构建可解释 sources
+        List<SourceDocument> sources = matches.stream().map(match -> {
+
+            SourceDocument doc = new SourceDocument();
+
+            String text = match.embedded().text();
+            double score = match.score();
+
+            doc.setContent(text);
+            doc.setScore(score);
+
+            // ⭐ 解释 score
+            doc.setScoreLevel(explainScore(score));
+
+            // ⭐ 命中原因（核心可解释点）
+            doc.setMatchedReason(buildReason(question, text));
+
+            // ⭐ source
+            doc.setSource(
+                    match.embedded().metadata().getString("source")
+            );
+
+            return doc;
+        }).toList();
+
+        // 4️⃣ 拼上下文
+        String context = sources.stream()
+                .map(SourceDocument::getContent)
+                .reduce("", (a, b) -> a + "\n" + b);
+
+        String prompt = """
+                你是一个严谨的AI助手，请基于资料回答问题。
+
+                资料：
+                %s
+
+                问题：
+                %s
+                """.formatted(context, question);
+
+        String answer = chatModel.generate(prompt);
+
+        // 5️⃣ 返回
+        RagResponse res = new RagResponse();
+        res.setAnswer(answer);
+        res.setSources(sources);
+
+        return res;
+    }
+
+    // ===== 可解释逻辑 =====
+
+    private String explainScore(double score) {
+        if (score > 0.8) return "HIGH(强相关)";
+        if (score > 0.5) return "MEDIUM(中相关)";
+        return "LOW(弱相关)";
+    }
+
+    private String buildReason(String question, String text) {
+
+        // 非AI解释（工程可控）
+        StringBuilder sb = new StringBuilder();
+
+        if (text.contains("RAG")) sb.append("命中关键词:RAG ");
+        if (text.contains("检索")) sb.append("命中关键词:检索 ");
+        if (text.contains("生成")) sb.append("命中关键词:生成 ");
+
+        if (sb.length() == 0) {
+            sb.append("语义相似匹配");
+        }
+
+        return sb.toString();
     }
 }
