@@ -8,6 +8,8 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.springframework.stereotype.Component;
 
@@ -18,7 +20,7 @@ public class RagChatAgent {
 
     private final ChatLanguageModel chatModel;
     private final EmbeddingModel embeddingModel;
-    private final EmbeddingStore<TextSegment> store;
+    private final EmbeddingStore<TextSegment> embeddingStore;
 
     public RagChatAgent(ChatLanguageModel chatModel,
                         EmbeddingModel embeddingModel,
@@ -26,89 +28,98 @@ public class RagChatAgent {
 
         this.chatModel = chatModel;
         this.embeddingModel = embeddingModel;
-        this.store = ragService.getStore();
+        this.embeddingStore = ragService.getStore();
     }
 
     public RagResponse ask(String question) {
 
-        // 1️⃣ 向量化
-        Embedding queryEmbedding = embeddingModel.embed(question).content();
+        // 1️⃣ embedding
+        Embedding queryEmbedding =
+                embeddingModel.embed(question).content();
 
-        // 2️⃣ 检索
+        // 2️⃣ Level 3 正确检索方式（0.36）
+        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+                .queryEmbedding(queryEmbedding)
+                .maxResults(5)
+                .minScore(0.0)
+                .build();
+
+        EmbeddingSearchResult<TextSegment> result =
+                embeddingStore.search(request);
+
         List<EmbeddingMatch<TextSegment>> matches =
-                store.findRelevant(queryEmbedding, 5);
+                result.matches();
 
-        // 3️⃣ 构建可解释 sources
+        // 3️⃣ 可解释 sources
         List<SourceDocument> sources = matches.stream().map(match -> {
 
             SourceDocument doc = new SourceDocument();
 
-            String text = match.embedded().text();
+            doc.setContent(match.embedded().text());
             double score = match.score();
 
-            doc.setContent(text);
             doc.setScore(score);
+            doc.setScoreLevel(scoreLevel(score));
 
-            // ⭐ 解释 score
-            doc.setScoreLevel(explainScore(score));
+            doc.setSource(match.embedded().metadata().getString("source"));
 
-            // ⭐ 命中原因（核心可解释点）
-            doc.setMatchedReason(buildReason(question, text));
-
-            // ⭐ source
-            doc.setSource(
-                    match.embedded().metadata().getString("source")
+            // ⭐ Level 3：可解释性
+            doc.setMatchedReason(
+                    buildReason(match.embedded().text(), question)
             );
 
             return doc;
         }).toList();
 
-        // 4️⃣ 拼上下文
-        String context = sources.stream()
-                .map(SourceDocument::getContent)
-                .reduce("", (a, b) -> a + "\n" + b);
+        // 4️⃣ prompt（企业版：结构化上下文）
+        StringBuilder context = new StringBuilder();
 
-        String prompt = """
-                你是一个严谨的AI助手，请基于资料回答问题。
-
-                资料：
-                %s
-
-                问题：
-                %s
-                """.formatted(context, question);
-
-        String answer = chatModel.generate(prompt);
-
-        // 5️⃣ 返回
-        RagResponse res = new RagResponse();
-        res.setAnswer(answer);
-        res.setSources(sources);
-
-        return res;
-    }
-
-    // ===== 可解释逻辑 =====
-
-    private String explainScore(double score) {
-        if (score > 0.8) return "HIGH(强相关)";
-        if (score > 0.5) return "MEDIUM(中相关)";
-        return "LOW(弱相关)";
-    }
-
-    private String buildReason(String question, String text) {
-
-        // 非AI解释（工程可控）
-        StringBuilder sb = new StringBuilder();
-
-        if (text.contains("RAG")) sb.append("命中关键词:RAG ");
-        if (text.contains("检索")) sb.append("命中关键词:检索 ");
-        if (text.contains("生成")) sb.append("命中关键词:生成 ");
-
-        if (sb.length() == 0) {
-            sb.append("语义相似匹配");
+        for (SourceDocument s : sources) {
+            context.append("来源片段：")
+                    .append(s.getContent())
+                    .append("\n");
         }
 
-        return sb.toString();
+        String answer = chatModel.generate(
+                "你必须基于以下资料回答问题：\n"
+                        + context
+                        + "\n问题：" + question
+        );
+
+        // 5️⃣ response
+        RagResponse resp = new RagResponse();
+        resp.setAnswer(answer);
+        resp.setSources(sources);
+
+        return resp;
+    }
+
+    // ⭐ 可解释RAG核心（Level 3）
+    private String buildReason(String chunk, String question) {
+
+        if (chunk == null) return "无匹配内容";
+
+        String q = question.toLowerCase();
+        String c = chunk.toLowerCase();
+
+        int score = 0;
+
+        for (String word : q.split(" ")) {
+            if (c.contains(word)) {
+                score++;
+            }
+        }
+
+        if (score >= 3) return "高相关：多关键词命中";
+        if (score == 2) return "中相关：部分关键词命中";
+        if (score == 1) return "低相关：弱语义匹配";
+        return "语义匹配（embedding匹配）";
+    }
+    private String scoreLevel(double score) {
+        if (score >= 0.80) return "VERY_HIGH";
+        if (score >= 0.65) return "HIGH";
+        if (score >= 0.45) return "MEDIUM";
+        if (score >= 0.30) return "LOW";
+        return "VERY_LOW";
     }
 }

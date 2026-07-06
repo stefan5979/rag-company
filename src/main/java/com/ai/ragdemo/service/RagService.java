@@ -1,8 +1,8 @@
 package com.ai.ragdemo.service;
 
 import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
+import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class RagService {
@@ -29,7 +31,6 @@ public class RagService {
     @PostConstruct
     public void init() throws Exception {
 
-        // 1️⃣ 读取文件
         ClassPathResource resource = new ClassPathResource("rag-test.txt");
 
         String text = new String(
@@ -37,30 +38,33 @@ public class RagService {
                 StandardCharsets.UTF_8
         );
 
-        // 2️⃣ 构建文档
         Document document = Document.from(text);
 
-        // 3️⃣ 文本切分（chunk）
         List<TextSegment> segments =
-                DocumentSplitters.recursive(300, 50)
+                DocumentSplitters.recursive(200, 50)
                         .split(document)
                         .stream()
-                        .map(segment -> TextSegment.from(
-                                segment.text(),
-                                Metadata.from("source", "rag-test.txt")
-                        ))
+                        .map(segment -> {
+
+                            Map<String, String> meta = new HashMap<>();
+                            meta.put("source", "rag-test.txt");
+                            meta.put("length", String.valueOf(segment.text().length()));
+
+                            return TextSegment.from(
+                                    segment.text(),
+                                    Metadata.from(meta)
+                            );
+                        })
                         .toList();
 
-        // 4️⃣ 向量化 + 存储
         embeddingStore.addAll(
                 embeddingModel.embedAll(segments).content(),
                 segments
         );
 
-        System.out.println("✅ RAG初始化完成，chunk数量：" + segments.size());
+        System.out.println("✔ Level3 RAG 初始化完成：" + segments.size());
     }
 
-    // 5️⃣ 对外暴露向量库
     public EmbeddingStore<TextSegment> getStore() {
         return embeddingStore;
     }
