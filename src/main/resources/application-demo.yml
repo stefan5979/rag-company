@@ -1,0 +1,9 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-demo
+
+dashscope:
+  api-key: sk-xxxxxxxxxxx
