@@ -1,0 +1,35 @@
+# ===================== IDEA 相关缓存文件 =====================
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+idea-build/
+
+# ===================== Maven 编译产物 =====================
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+
+# ===================== 系统隐藏文件 =====================
+.DS_Store
+Thumbs.db
+
+# ===================== 敏感配置（核心：防止大模型密钥泄露） =====================
+# 真实带密钥的配置本地保留，禁止上传
+application.yml
+# 日志文件
+logs/
+*.log
+
+# ===================== 临时文件、编译缓存 =====================
+*.class
+*.jar
+*.war
+*.tmp
+*.bak
